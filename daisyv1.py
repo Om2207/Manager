@@ -10,7 +10,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
-TOKEN = '6972425077:AAG1-KTOtuR-qVO6siEP1sOnyilWbds8Sy4'
+TOKEN = '7322487785:AAFshCuUmVA8-YJNz55pYamOcmr0aeBFq2Y'
 
 # Store user data (you might want to use a database for a production bot)
 user_data = {}
