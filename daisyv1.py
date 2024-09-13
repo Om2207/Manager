@@ -2,7 +2,7 @@ import logging
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
-import json
+import telegram
 from datetime import datetime, timedelta
 
 # Enable logging
@@ -12,12 +12,40 @@ logger = logging.getLogger(__name__)
 # Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
 TOKEN = '7322487785:AAFshCuUmVA8-YJNz55pYamOcmr0aeBFq2Y'
 
-# Store user data want to use a database for a production bot)
+# Store user data (you might want to use a database for a production bot)
 user_data = {}
 
 # Bot owner details
 OWNER_ID = 6008343239
 OWNER_USERNAME = "@rundilundlegamera"
+
+def is_owner(user_id: int) -> bool:
+    """Check if the user is the bot owner."""
+    return user_id == OWNER_ID
+
+def is_admin(update: Update, context: CallbackContext) -> bool:
+    """Check if the user is an admin, the bot owner, or if the bot itself is an admin."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if is_owner(user_id):
+        return True
+    
+    try:
+        chat_member = context.bot.get_chat_member(chat_id, user_id)
+        return chat_member.status in ['creator', 'administrator']
+    except Exception as e:
+        logger.error(f"Error checking admin status: {e}")
+        return False
+
+def bot_has_admin_rights(context: CallbackContext, chat_id: int) -> bool:
+    """Check if the bot has admin rights in the chat."""
+    try:
+        bot_member = context.bot.get_chat_member(chat_id, context.bot.id)
+        return bot_member.status in ['creator', 'administrator']
+    except Exception as e:
+        logger.error(f"Error checking bot admin status: {e}")
+        return False
 
 def start(update: Update, context: CallbackContext) -> None:
     """Send a message when the command /start is issued."""
@@ -112,71 +140,86 @@ def settings(update: Update, context: CallbackContext) -> None:
     query.answer()
     query.edit_message_text('Settings:', reply_markup=reply_markup)
 
-def is_admin(update: Update, context: CallbackContext) -> bool:
-    """Check if the user is an admin or the bot owner."""
-    user_id = update.effective_user.id
-    if user_id == OWNER_ID:
-        return True
-    chat_id = update.effective_chat.id
-    user_status = context.bot.get_chat_member(chat_id, user_id).status
-    return user_status in ['creator', 'administrator']
-
 def ban(update: Update, context: CallbackContext) -> None:
     """Ban a user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't ban users.")
+        return
+    
     if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
         user_id = update.message.reply_to_message.from_user.id
         try:
             context.bot.ban_chat_member(chat_id, user_id)
             update.message.reply_text(f"🚫 User {user_id} has been banned.")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to ban the user.")
 
 def unban(update: Update, context: CallbackContext) -> None:
     """Unban a user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't unban users.")
+        return
+    
     if context.args:
-        chat_id = update.effective_chat.id
         user_id = int(context.args[0])
         try:
             context.bot.unban_chat_member(chat_id, user_id)
             update.message.reply_text(f"✅ User {user_id} has been unbanned.")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             update.message.reply_text(f"❌ Failed to unban user: {str(e)}")
     else:
         update.message.reply_text("Please provide a user ID to unban.")
 
 def kick(update: Update, context: CallbackContext) -> None:
     """Kick a user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't kick users.")
+        return
+    
     if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
         user_id = update.message.reply_to_message.from_user.id
         try:
             context.bot.kick_chat_member(chat_id, user_id)
             context.bot.unban_chat_member(chat_id, user_id)
             update.message.reply_text(f"👢 User {user_id} has been kicked.")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             update.message.reply_text(f"❌ Failed to kick user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to kick the user.")
 
 def mute(update: Update, context: CallbackContext) -> None:
     """Mute a user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't mute users.")
+        return
+    
     if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
         user_id = update.message.reply_to_message.from_user.id
         try:
             context.bot.restrict_chat_member(
@@ -190,16 +233,48 @@ def mute(update: Update, context: CallbackContext) -> None:
                 )
             )
             update.message.reply_text(f"🔇 User {user_id} has been muted.")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             update.message.reply_text(f"❌ Failed to mute user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to mute the user.")
 
-def warn(update: Update, context: CallbackContext) -> None:
-    """Warn a user."""
-    if not is_admin(update, context):
+def unmute(update: Update, context: CallbackContext) -> None:
+    """Unmute a user."""
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't unmute users.")
+        return
+    
+    if update.message.reply_to_message:
+        user_id = update.message.reply_to_message.from_user.id
+        try:
+            context.bot.restrict_chat_member(
+                chat_id, 
+                user_id, 
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_media_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True
+                )
+            )
+            update.message.reply_text(f"🔊 User {user_id} has been unmuted.")
+        except telegram.error.TelegramError as e:
+            update.message.reply_text(f"❌ Failed to unmute user: {str(e)}")
+    else:
+        update.message.reply_text("Please reply to a message to unmute the user.")
+
+def warn(update: Update, context: CallbackContext) -> None:
+    """Warn a user."""
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    
     if update.message.reply_to_message:
         warned_user = update.message.reply_to_message.from_user
         user_id = warned_user.id
@@ -221,16 +296,17 @@ def warn(update: Update, context: CallbackContext) -> None:
                 context.bot.kick_chat_member(chat_id, user_id)
                 update.message.reply_text(f"🚫 User {warned_user.mention_markdown_v2()} has been banned due to excessive warnings\.", 
                                           parse_mode='MarkdownV2')
-            except Exception as e:
+            except telegram.error.TelegramError as e:
                 update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to warn the user.")
 
 def unwarn(update: Update, context: CallbackContext) -> None:
     """Remove a warning from a user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
     if update.message.reply_to_message:
         user = update.message.reply_to_message.from_user
         user_id = user.id
@@ -251,11 +327,17 @@ def unwarn(update: Update, context: CallbackContext) -> None:
 
 def promote(update: Update, context: CallbackContext) -> None:
     """Promote a user to admin."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't promote users.")
+        return
+    
     if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
         user_id = update.message.reply_to_message.from_user.id
         try:
             context.bot.promote_chat_member(chat_id, user_id,
@@ -266,18 +348,27 @@ def promote(update: Update, context: CallbackContext) -> None:
                                             can_pin_messages=True,
                                             can_promote_members=False)
             update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin.")
-        except Exception as e:
-            update.message.reply_text(f"❌ Failed to promote user: {str(e)}")
+        except telegram.error.TelegramError as e:
+            if "Chat_admin_required" in str(e):
+                update.message.reply_text("❌ I don't have sufficient rights to promote users in this chat.")
+            else:
+                update.message.reply_text(f"❌ Failed to promote user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to promote the user.")
 
 def demote(update: Update, context: CallbackContext) -> None:
     """Demote an admin to regular user."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
+    
+    chat_id = update.effective_chat.id
+    
+    if not bot_has_admin_rights(context, chat_id):
+        update.message.reply_text("❌ I don't have admin rights in this chat. I can't demote users.")
+        return
+    
     if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
         user_id = update.message.reply_to_message.from_user.id
         try:
             context.bot.promote_chat_member(chat_id, user_id,
@@ -288,39 +379,14 @@ def demote(update: Update, context: CallbackContext) -> None:
                                             can_pin_messages=False,
                                             can_promote_members=False)
             update.message.reply_text(f"⬇️ User {user_id} has been demoted to regular user.")
-        except Exception as e:
+        except telegram.error.TelegramError as e:
             update.message.reply_text(f"❌ Failed to demote user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to demote the user.")
 
-def unmute(update: Update, context: CallbackContext) -> None:
-    """Unmute a user."""
-    if not is_admin(update, context):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
-        return
-    if update.message.reply_to_message:
-        chat_id = update.effective_chat.id
-        user_id = update.message.reply_to_message.from_user.id
-        try:
-            context.bot.restrict_chat_member(
-                chat_id, 
-                user_id, 
-                permissions=ChatPermissions(
-                    can_send_messages=True,
-                    can_send_media_messages=True,
-                    can_send_other_messages=True,
-                    can_add_web_page_previews=True
-                )
-            )
-            update.message.reply_text(f"🔊 User {user_id} has been unmuted.")
-        except Exception as e:
-            update.message.reply_text(f"❌ Failed to unmute user: {str(e)}")
-    else:
-        update.message.reply_text("Please reply to a message to unmute the user.")
-
 def gban(update: Update, context: CallbackContext) -> None:
     """Global ban a user from all chats where the bot is present."""
-    if update.effective_user.id != OWNER_ID:
+    if not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 Only the bot owner can use this command.")
         return
     if update.message.reply_to_message:
@@ -344,7 +410,7 @@ def gban(update: Update, context: CallbackContext) -> None:
 
 def announcement(update: Update, context: CallbackContext) -> None:
     """Send an announcement to all chats where the bot is present."""
-    if update.effective_user.id != OWNER_ID:
+    if not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 Only the bot owner can use this command.")
         return
     if not context.args:
@@ -482,7 +548,7 @@ def quote(update: Update, context: CallbackContext) -> None:
 
 def set_welcome(update: Update, context: CallbackContext) -> None:
     """Set welcome message."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
@@ -498,7 +564,7 @@ def set_welcome(update: Update, context: CallbackContext) -> None:
 
 def set_goodbye(update: Update, context: CallbackContext) -> None:
     """Set goodbye message."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
@@ -514,7 +580,7 @@ def set_goodbye(update: Update, context: CallbackContext) -> None:
 
 def set_rules(update: Update, context: CallbackContext) -> None:
     """Set chat rules."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
@@ -530,7 +596,7 @@ def set_rules(update: Update, context: CallbackContext) -> None:
 
 def set_antispam(update: Update, context: CallbackContext) -> None:
     """Set anti-spam settings."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
@@ -553,7 +619,7 @@ def set_antispam(update: Update, context: CallbackContext) -> None:
 
 def set_antiflood(update: Update, context: CallbackContext) -> None:
     """Set anti-flood settings."""
-    if not is_admin(update, context):
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
