@@ -10,7 +10,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
-TOKEN = '7322487785:AAFshCuUmVA8-YJNz55pYamOcmr0aeBFq2Y'
+TOKEN = '6972425077:AAG1-KTOtuR-qVO6siEP1sOnyilWbds8Sy4'
 
 # Store user data (you might want to use a database for a production bot)
 user_data = {}
@@ -89,6 +89,10 @@ def admin_commands(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("🔄 Unwarn", callback_data='unwarn'),
          InlineKeyboardButton("🎖️ Promote", callback_data='promote')],
         [InlineKeyboardButton("⬇️ Demote", callback_data='demote'),
+         InlineKeyboardButton("🧹 Purge", callback_data='purge')],
+        [InlineKeyboardButton("🔍 Filter", callback_data='filter'),
+         InlineKeyboardButton("🛑 Stop Filter", callback_data='stop')],
+        [InlineKeyboardButton("📋 Filter List", callback_data='filterlist'),
          InlineKeyboardButton("🌐🚫 Global Ban", callback_data='gban')],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
@@ -326,7 +330,7 @@ def unwarn(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Please reply to a message to remove a warning from the user.")
 
 def promote(update: Update, context: CallbackContext) -> None:
-    """Promote a user to admin."""
+    """Promote a user to admin with an optional custom tag."""
     if not is_admin(update, context) and not is_owner(update.effective_user.id):
         update.message.reply_text("🚫 You don't have permission to use this command.")
         return
@@ -339,6 +343,8 @@ def promote(update: Update, context: CallbackContext) -> None:
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
+        custom_title = ' '.join(context.args) if context.args else "Admin"
+        
         try:
             context.bot.promote_chat_member(chat_id, user_id,
                                             can_change_info=True,
@@ -347,7 +353,10 @@ def promote(update: Update, context: CallbackContext) -> None:
                                             can_restrict_members=True,
                                             can_pin_messages=True,
                                             can_promote_members=False)
-            update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin.")
+            
+            context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
+            
+            update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin with the title: {custom_title}")
         except telegram.error.TelegramError as e:
             if "Chat_admin_required" in str(e):
                 update.message.reply_text("❌ I don't have sufficient rights to promote users in this chat.")
@@ -383,6 +392,38 @@ def demote(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(f"❌ Failed to demote user: {str(e)}")
     else:
         update.message.reply_text("Please reply to a message to demote the user.")
+
+def purge(update: Update, context: CallbackContext) -> None:
+    """Purge a specified number of messages."""
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    
+    chat_id = update.effective_chat.id
+    if not context.args:
+        update.message.reply_text("Please specify the number of messages to purge.")
+        return
+    
+    try:
+        num_messages = int(context.args[0])
+    except ValueError:
+        update.message.reply_text("Please provide a valid number of messages to purge.")
+        return
+    
+    if update.message.reply_to_message:
+        message_id = update.message.reply_to_message.message_id
+        deleted_count = 0
+        
+        for i in range(message_id, message_id + num_messages + 1):
+            try:
+                context.bot.delete_message(chat_id=chat_id, message_id=i)
+                deleted_count += 1
+            except telegram.error.BadRequest:
+                pass
+        
+        update.message.reply_text(f"🧹 Purged {deleted_count} messages.")
+    else:
+        update.message.reply_text("Please reply to the message from where you want to start purging.")
 
 def gban(update: Update, context: CallbackContext) -> None:
     """Global ban a user from all chats where the bot is present."""
@@ -428,6 +469,98 @@ def announcement(update: Update, context: CallbackContext) -> None:
             continue
     
     update.message.reply_text("Announcement sent to all chats.")
+
+def filter_message(update: Update, context: CallbackContext) -> None:
+    """Save a message as a filter."""
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    
+    chat_id = update.effective_chat.id
+    if update.message.reply_to_message:
+        if not context.args:
+            update.message.reply_text("Please provide a keyword for the filter.")
+            return
+        
+        keyword = context.args[0].lower()
+        message = update.message.reply_to_message
+        
+        if chat_id not in user_data:
+            user_data[chat_id] = {}
+        if "filters" not in user_data[chat_id]:
+            user_data[chat_id]["filters"] = {}
+        
+        user_data[chat_id]["filters"][keyword] = {
+            "text": message.text,
+            "photo": message.photo[-1].file_id if message.photo else None,
+            "document": message.document.file_id if message.document else None,
+            "sticker": message.sticker.file_id if message.sticker else None,
+            "animation": message.animation.file_id if message.animation else None,
+            "video": message.video.file_id if message.video else None,
+            "voice": message.voice.file_id if message.voice else None,
+            "audio": message.audio.file_id if message.audio else None,
+        }
+        
+        update.message.reply_text(f"Filter '{keyword}' has been saved.")
+    else:
+        update.message.reply_text("Please reply to a message to save it as a filter.")
+
+def stop_filter(update: Update, context: CallbackContext) -> None:
+    """Remove a filter."""
+    if not is_admin(update, context) and not is_owner(update.effective_user.id):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    
+    chat_id = update.effective_chat.id
+    if not context.args:
+        update.message.reply_text("Please specify the filter keyword to remove.")
+        return
+    
+    keyword = context.args[0].lower()
+    
+    if chat_id in user_data and "filters" in user_data[chat_id] and keyword in user_data[chat_id]["filters"]:
+        del user_data[chat_id]["filters"][keyword]
+        update.message.reply_text(f"Filter '{keyword}' has been removed.")
+    else:
+        update.message.reply_text(f"Filter '{keyword}' does not exist.")
+
+def filter_list(update: Update, context: CallbackContext) -> None:
+    """Show all active filters in the chat."""
+    chat_id = update.effective_chat.id
+    
+    if chat_id in user_data and "filters" in user_data[chat_id] and user_data[chat_id]["filters"]:
+        filter_list = "Active filters in this chat:\n\n"
+        for keyword in user_data[chat_id]["filters"].keys():
+            filter_list += f"- {keyword}\n"
+        update.message.reply_text(filter_list)
+    else:
+        update.message.reply_text("There are no active filters in this chat.")
+
+def handle_filters(update: Update, context: CallbackContext) -> None:
+    """Check incoming messages for filters and respond accordingly."""
+    chat_id = update.effective_chat.id
+    message_text = update.message.text.lower() if update.message.text else ""
+    
+    if chat_id in user_data and "filters" in user_data[chat_id]:
+        for keyword, filter_data in user_data[chat_id]["filters"].items():
+            if keyword in message_text:
+                if filter_data["text"]:
+                    update.message.reply_text(filter_data["text"])
+                if filter_data["photo"]:
+                    update.message.reply_photo(filter_data["photo"])
+                if filter_data["document"]:
+                    update.message.reply_document(filter_data["document"])
+                if filter_data["sticker"]:
+                    update.message.reply_sticker(filter_data["sticker"])
+                if filter_data["animation"]:
+                    update.message.reply_animation(filter_data["animation"])
+                if filter_data["video"]:
+                    update.message.reply_video(filter_data["video"])
+                if filter_data["voice"]:
+                    update.message.reply_voice(filter_data["voice"])
+                if filter_data["audio"]:
+                    update.message.reply_audio(filter_data["audio"])
+                break
 
 def info(update: Update, context: CallbackContext) -> None:
     """Show user and chat information."""
@@ -506,6 +639,10 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 "/unwarn - Remove a warning from a user (admin only)\n" \
                 "/promote - Promote a user to admin (admin only)\n" \
                 "/demote - Demote an admin to regular user (admin only)\n" \
+                "/purge - Delete a specified number of messages (admin only)\n" \
+                "/filter - Save a message as a filter (admin only)\n" \
+                "/stop - Remove a filter (admin only)\n" \
+                "/filterlist - Show all active filters in the chat\n" \
                 "/gban - Globally ban a user (bot owner only)\n" \
                 "/announcement - Send an announcement to all chats (bot owner only)\n" \
                 "/roll_dice - Roll a dice\n" \
@@ -655,6 +792,9 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         if "antiflood" in user_data[chat_id]:
             antiflood = user_data[chat_id]["antiflood"]
             check_flood(update, context, antiflood["msg_limit"], antiflood["time_frame"])
+    
+    # Check for filters
+    handle_filters(update, context)
 
 def check_spam(update: Update, context: CallbackContext, msg_limit: int, time_frame: int) -> None:
     """Check for spam messages."""
@@ -711,8 +851,8 @@ def button(update: Update, context: CallbackContext) -> None:
         fun_commands(update, context)
     elif query.data == 'settings':
         settings(update, context)
-    elif query.data in ['ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'promote', 'demote', 'gban']:
-        query.edit_message_text(f"Use /{query.data} command to {query.data} a user.")
+    elif query.data in ['ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'promote', 'demote', 'gban', 'purge', 'filter', 'stop', 'filterlist']:
+        query.edit_message_text(f"Use /{query.data} command to {query.data} a user or manage filters.")
     elif query.data == 'info':
         info_text = "Use /info command to get user and chat information."
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='user_commands')]]
@@ -734,10 +874,10 @@ def main() -> None:
     """Start the bot."""
     # Create the Updater and pass it your bot's token.
     updater = Updater(TOKEN)
-
+    
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
-
+    
     # on different commands - answer in Telegram
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("help", help_command))
@@ -764,16 +904,20 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("set_rules", set_rules))
     dispatcher.add_handler(CommandHandler("set_antispam", set_antispam))
     dispatcher.add_handler(CommandHandler("set_antiflood", set_antiflood))
-
+    dispatcher.add_handler(CommandHandler("purge", purge))
+    dispatcher.add_handler(CommandHandler("filter", filter_message))
+    dispatcher.add_handler(CommandHandler("stop", stop_filter))
+    dispatcher.add_handler(CommandHandler("filterlist", filter_list))
+    
     # on non command i.e message - check for spam and handle message
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
+    
     # on button press
     dispatcher.add_handler(CallbackQueryHandler(button))
-
+    
     # Start the Bot
     updater.start_polling()
-
+    
     # Run the bot until you press Ctrl-C or the process receives SIGINT,
     # SIGTERM or SIGABRT. This should be used most of the time, since
     # start_polling() is non-blocking and will stop the bot gracefully.
