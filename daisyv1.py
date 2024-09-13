@@ -1,8 +1,10 @@
 import logging
 import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
-import telegram
+import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, Bot
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from datetime import datetime, timedelta
 
 # Enable logging
@@ -19,11 +21,14 @@ user_data = {}
 OWNER_ID = 6008343239
 OWNER_USERNAME = "@rundilundlegamera"
 
+# Store all chat IDs
+all_chat_ids = set()
+
 def is_owner(user_id: int) -> bool:
     """Check if the user is the bot owner."""
     return user_id == OWNER_ID
 
-def is_admin(update: Update, context: CallbackContext) -> bool:
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Check if the user is an admin, the bot owner, or if the bot itself is an admin."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -32,22 +37,31 @@ def is_admin(update: Update, context: CallbackContext) -> bool:
         return True
     
     try:
-        chat_member = context.bot.get_chat_member(chat_id, user_id)
+        chat_member = await context.bot.get_chat_member(chat_id, user_id)
         return chat_member.status in ['creator', 'administrator']
     except Exception as e:
         logger.error(f"Error checking admin status: {e}")
         return False
 
-def bot_has_admin_rights(context: CallbackContext, chat_id: int) -> bool:
+async def bot_has_admin_rights(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> bool:
     """Check if the bot has admin rights in the chat."""
     try:
-        bot_member = context.bot.get_chat_member(chat_id, context.bot.id)
+        bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
         return bot_member.status in ['creator', 'administrator']
     except Exception as e:
         logger.error(f"Error checking bot admin status: {e}")
         return False
 
-def start(update: Update, context: CallbackContext) -> None:
+async def update_chat_list(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Update the list of all chats where the bot is a member."""
+    global all_chat_ids
+    bot = context.bot
+    updates = await bot.get_updates(offset=-1, timeout=0)
+    for update in updates:
+        if update.message:
+            all_chat_ids.add(update.message.chat_id)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     welcome_message = (
@@ -58,10 +72,10 @@ def start(update: Update, context: CallbackContext) -> None:
         f"💡 Use /help to see available commands\n\n"
         f"Let's make this chat a beautiful garden together\! 🌻"
     )
-    update.message.reply_markdown_v2(welcome_message)
-    main_menu(update, context)
+    await update.message.reply_markdown_v2(welcome_message)
+    await main_menu(update, context)
 
-def main_menu(update: Update, context: CallbackContext) -> None:
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the main menu."""
     keyboard = [
         [InlineKeyboardButton("👮 Admin Commands", callback_data='admin_commands')],
@@ -71,13 +85,11 @@ def main_menu(update: Update, context: CallbackContext) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
-        update.message.reply_text('Please choose a category:', reply_markup=reply_markup)
+        await update.message.reply_text('Please choose a category:', reply_markup=reply_markup)
     else:
-        query = update.callback_query
-        query.answer()
-        query.edit_message_text('Please choose a category:', reply_markup=reply_markup)
+        await update.callback_query.edit_message_text('Please choose a category:', reply_markup=reply_markup)
 
-def admin_commands(update: Update, context: CallbackContext) -> None:
+async def admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show admin commands."""
     keyboard = [
         [InlineKeyboardButton("🚫 Ban", callback_data='ban'),
@@ -97,11 +109,9 @@ def admin_commands(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text('Admin Commands:', reply_markup=reply_markup)
+    await update.callback_query.edit_message_text('Admin Commands:', reply_markup=reply_markup)
 
-def user_commands(update: Update, context: CallbackContext) -> None:
+async def user_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show user commands."""
     keyboard = [
         [InlineKeyboardButton("ℹ️ Info", callback_data='info'),
@@ -111,11 +121,9 @@ def user_commands(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text('User Commands:', reply_markup=reply_markup)
+    await update.callback_query.edit_message_text('User Commands:', reply_markup=reply_markup)
 
-def fun_commands(update: Update, context: CallbackContext) -> None:
+async def fun_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show fun commands."""
     keyboard = [
         [InlineKeyboardButton("🎲 Roll Dice", callback_data='roll_dice'),
@@ -125,11 +133,9 @@ def fun_commands(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text('Fun Commands:', reply_markup=reply_markup)
+    await update.callback_query.edit_message_text('Fun Commands:', reply_markup=reply_markup)
 
-def settings(update: Update, context: CallbackContext) -> None:
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show settings."""
     keyboard = [
         [InlineKeyboardButton("👋 Welcome Message", callback_data='set_welcome'),
@@ -140,93 +146,91 @@ def settings(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    query = update.callback_query
-    query.answer()
-    query.edit_message_text('Settings:', reply_markup=reply_markup)
+    await update.callback_query.edit_message_text('Settings:', reply_markup=reply_markup)
 
-def ban(update: Update, context: CallbackContext) -> None:
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Ban a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't ban users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't ban users.")
         return
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         try:
-            context.bot.ban_chat_member(chat_id, user_id)
-            update.message.reply_text(f"🚫 User {user_id} has been banned.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
+            await context.bot.ban_chat_member(chat_id, user_id)
+            await update.message.reply_text(f"🚫 User {user_id} has been banned.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to ban the user.")
+        await update.message.reply_text("Please reply to a message to ban the user.")
 
-def unban(update: Update, context: CallbackContext) -> None:
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unban a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't unban users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't unban users.")
         return
     
     if context.args:
         user_id = int(context.args[0])
         try:
-            context.bot.unban_chat_member(chat_id, user_id)
-            update.message.reply_text(f"✅ User {user_id} has been unbanned.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to unban user: {str(e)}")
+            await context.bot.unban_chat_member(chat_id, user_id)
+            await update.message.reply_text(f"✅ User {user_id} has been unbanned.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to unban user: {str(e)}")
     else:
-        update.message.reply_text("Please provide a user ID to unban.")
+        await update.message.reply_text("Please provide a user ID to unban.")
 
-def kick(update: Update, context: CallbackContext) -> None:
+async def kick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Kick a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't kick users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't kick users.")
         return
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         try:
-            context.bot.kick_chat_member(chat_id, user_id)
-            context.bot.unban_chat_member(chat_id, user_id)
-            update.message.reply_text(f"👢 User {user_id} has been kicked.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to kick user: {str(e)}")
+            await context.bot.ban_chat_member(chat_id, user_id)
+            await context.bot.unban_chat_member(chat_id, user_id)
+            await update.message.reply_text(f"👢 User {user_id} has been kicked.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to kick user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to kick the user.")
+        await update.message.reply_text("Please reply to a message to kick the user.")
 
-def mute(update: Update, context: CallbackContext) -> None:
+async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Mute a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't mute users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't mute users.")
         return
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         try:
-            context.bot.restrict_chat_member(
+            await context.bot.restrict_chat_member(
                 chat_id, 
                 user_id, 
                 permissions=ChatPermissions(
@@ -236,28 +240,28 @@ def mute(update: Update, context: CallbackContext) -> None:
                     can_add_web_page_previews=False
                 )
             )
-            update.message.reply_text(f"🔇 User {user_id} has been muted.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to mute user: {str(e)}")
+            await update.message.reply_text(f"🔇 User {user_id} has been muted.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to mute user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to mute the user.")
+        await update.message.reply_text("Please reply to a message to mute the user.")
 
-def unmute(update: Update, context: CallbackContext) -> None:
+async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unmute a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't unmute users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't unmute users.")
         return
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         try:
-            context.bot.restrict_chat_member(
+            await context.bot.restrict_chat_member(
                 chat_id, 
                 user_id, 
                 permissions=ChatPermissions(
@@ -267,16 +271,16 @@ def unmute(update: Update, context: CallbackContext) -> None:
                     can_add_web_page_previews=True
                 )
             )
-            update.message.reply_text(f"🔊 User {user_id} has been unmuted.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to unmute user: {str(e)}")
+            await update.message.reply_text(f"🔊 User {user_id} has been unmuted.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to unmute user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to unmute the user.")
+        await update.message.reply_text("Please reply to a message to unmute the user.")
 
-def warn(update: Update, context: CallbackContext) -> None:
+async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Warn a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     if update.message.reply_to_message:
@@ -292,23 +296,23 @@ def warn(update: Update, context: CallbackContext) -> None:
         user_data[chat_id][user_id]["warnings"] += 1
         warn_count = user_data[chat_id][user_id]["warnings"]
         
-        update.message.reply_text(f"⚠️ User {warned_user.mention_markdown_v2()} has been warned\. "
-                                  f"Warning count: {warn_count}", parse_mode='MarkdownV2')
+        await update.message.reply_text(f"⚠️ User {warned_user.mention_markdown_v2()} has been warned\. "
+                                        f"Warning count: {warn_count}", parse_mode=ParseMode.MARKDOWN_V2)
         
         if warn_count >= 3:
             try:
-                context.bot.kick_chat_member(chat_id, user_id)
-                update.message.reply_text(f"🚫 User {warned_user.mention_markdown_v2()} has been banned due to excessive warnings\.", 
-                                          parse_mode='MarkdownV2')
-            except telegram.error.TelegramError as e:
-                update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
+                await context.bot.ban_chat_member(chat_id, user_id)
+                await update.message.reply_text(f"🚫 User {warned_user.mention_markdown_v2()} has been banned due to excessive warnings\.", 
+                                                parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception as e:
+                await update.message.reply_text(f"❌ Failed to ban user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to warn the user.")
+        await update.message.reply_text("Please reply to a message to warn the user.")
 
-def unwarn(update: Update, context: CallbackContext) -> None:
+async def unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove a warning from a user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     if update.message.reply_to_message:
@@ -320,25 +324,25 @@ def unwarn(update: Update, context: CallbackContext) -> None:
             if user_data[chat_id][user_id]["warnings"] > 0:
                 user_data[chat_id][user_id]["warnings"] -= 1
                 warn_count = user_data[chat_id][user_id]["warnings"]
-                update.message.reply_text(f"🔄 One warning has been removed from {user.mention_markdown_v2()}\. "
-                                          f"Current warning count: {warn_count}", parse_mode='MarkdownV2')
+                await update.message.reply_text(f"🔄 One warning has been removed from {user.mention_markdown_v2()}\. "
+                                                f"Current warning count: {warn_count}", parse_mode=ParseMode.MARKDOWN_V2)
             else:
-                update.message.reply_text(f"{user.mention_markdown_v2()} has no warnings to remove\.", parse_mode='MarkdownV2')
+                await update.message.reply_text(f"{user.mention_markdown_v2()} has no warnings to remove\.", parse_mode=ParseMode.MARKDOWN_V2)
         else:
-            update.message.reply_text(f"{user.mention_markdown_v2()} has no warnings\.", parse_mode='MarkdownV2')
+            await update.message.reply_text(f"{user.mention_markdown_v2()} has no warnings\.", parse_mode=ParseMode.MARKDOWN_V2)
     else:
-        update.message.reply_text("Please reply to a message to remove a warning from the user.")
+        await update.message.reply_text("Please reply to a message to remove a warning from the user.")
 
-def promote(update: Update, context: CallbackContext) -> None:
+async def promote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Promote a user to admin with an optional custom tag."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't promote users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't promote users.")
         return
     
     if update.message.reply_to_message:
@@ -346,68 +350,68 @@ def promote(update: Update, context: CallbackContext) -> None:
         custom_title = ' '.join(context.args) if context.args else "Admin"
         
         try:
-            context.bot.promote_chat_member(chat_id, user_id,
-                                            can_change_info=True,
-                                            can_delete_messages=True,
-                                            can_invite_users=True,
-                                            can_restrict_members=True,
-                                            can_pin_messages=True,
-                                            can_promote_members=False)
+            await context.bot.promote_chat_member(chat_id, user_id,
+                                                  can_change_info=True,
+                                                  can_delete_messages=True,
+                                                  can_invite_users=True,
+                                                  can_restrict_members=True,
+                                                  can_pin_messages=True,
+                                                  can_promote_members=False)
             
-            context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
+            await context.bot.set_chat_administrator_custom_title(chat_id, user_id, custom_title)
             
-            update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin with the title: {custom_title}")
-        except telegram.error.TelegramError as e:
+            await update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin with the title: {custom_title}")
+        except Exception as e:
             if "Chat_admin_required" in str(e):
-                update.message.reply_text("❌ I don't have sufficient rights to promote users in this chat.")
+                await update.message.reply_text("❌ I don't have sufficient rights to promote users in this chat.")
             else:
-                update.message.reply_text(f"❌ Failed to promote user: {str(e)}")
+                await update.message.reply_text(f"❌ Failed to promote user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to promote the user.")
+        await update.message.reply_text("Please reply to a message to promote the user.")
 
-def demote(update: Update, context: CallbackContext) -> None:
+async def demote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Demote an admin to regular user."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     
-    if not bot_has_admin_rights(context, chat_id):
-        update.message.reply_text("❌ I don't have admin rights in this chat. I can't demote users.")
+    if not await bot_has_admin_rights(context, chat_id):
+        await update.message.reply_text("❌ I don't have admin rights in this chat. I can't demote users.")
         return
     
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
         try:
-            context.bot.promote_chat_member(chat_id, user_id,
-                                            can_change_info=False,
-                                            can_delete_messages=False,
-                                            can_invite_users=False,
-                                            can_restrict_members=False,
-                                            can_pin_messages=False,
-                                            can_promote_members=False)
-            update.message.reply_text(f"⬇️ User {user_id} has been demoted to regular user.")
-        except telegram.error.TelegramError as e:
-            update.message.reply_text(f"❌ Failed to demote user: {str(e)}")
+            await context.bot.promote_chat_member(chat_id, user_id,
+                                                  can_change_info=False,
+                                                  can_delete_messages=False,
+                                                  can_invite_users=False,
+                                                  can_restrict_members=False,
+                                                  can_pin_messages=False,
+                                                  can_promote_members=False)
+            await update.message.reply_text(f"⬇️ User {user_id} has been demoted to regular user.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to demote user: {str(e)}")
     else:
-        update.message.reply_text("Please reply to a message to demote the user.")
+        await update.message.reply_text("Please reply to a message to demote the user.")
 
-def purge(update: Update, context: CallbackContext) -> None:
+async def purge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Purge a specified number of messages."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     if not context.args:
-        update.message.reply_text("Please specify the number of messages to purge.")
+        await update.message.reply_text("Please specify the number of messages to purge.")
         return
     
     try:
         num_messages = int(context.args[0])
     except ValueError:
-        update.message.reply_text("Please provide a valid number of messages to purge.")
+        await update.message.reply_text("Please provide a valid number of messages to purge.")
         return
     
     if update.message.reply_to_message:
@@ -416,70 +420,72 @@ def purge(update: Update, context: CallbackContext) -> None:
         
         for i in range(message_id, message_id + num_messages + 1):
             try:
-                context.bot.delete_message(chat_id=chat_id, message_id=i)
+                await context.bot.delete_message(chat_id=chat_id, message_id=i)
                 deleted_count += 1
-            except telegram.error.BadRequest:
+            except Exception:
                 pass
         
-        update.message.reply_text(f"🧹 Purged {deleted_count} messages.")
+        await update.message.reply_text(f"🧹 Purged {deleted_count} messages.")
     else:
-        update.message.reply_text("Please reply to the message from where you want to start purging.")
+        await update.message.reply_text("Please reply to the message from where you want to start purging.")
 
-def gban(update: Update, context: CallbackContext) -> None:
+async def gban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global ban a user from all chats where the bot is present."""
     if not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 Only the bot owner can use this command.")
+        await update.message.reply_text("🚫 Only the bot owner can use this command.")
         return
+    
     if update.message.reply_to_message:
         user_id = update.message.reply_to_message.from_user.id
-        try:
-            # Get all chats where the bot is a member
-            chats = context.bot.get_updates()
-            chat_ids = set(update.message.chat.id for update in chats if update.message)
-            
-            for chat_id in chat_ids:
-                try:
-                    context.bot.ban_chat_member(chat_id, user_id)
-                except Exception:
-                    continue
-            
-            update.message.reply_text(f"🌐🚫 User {user_id} has been globally banned from all chats.")
-        except Exception as e:
-            update.message.reply_text(f"❌ Failed to globally ban user: {str(e)}")
+        banned_count = 0
+        failed_count = 0
+        
+        for chat_id in all_chat_ids:
+            try:
+                await context.bot.ban_chat_member(chat_id, user_id)
+                banned_count += 1
+            except TelegramError as e:
+                failed_count += 1
+                print(f"Failed to ban user {user_id} in chat {chat_id}: {str(e)}")
+        
+        await update.message.reply_text(f"🌐🚫 User {user_id} has been globally banned from {banned_count} chats. Failed in {failed_count} chats.")
     else:
-        update.message.reply_text("Please reply to a message to globally ban the user.")
+        await update.message.reply_text("Please reply to a message to globally ban the user.")
 
-def announcement(update: Update, context: CallbackContext) -> None:
+async def announcement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send an announcement to all chats where the bot is present."""
     if not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 Only the bot owner can use this command.")
+        await update.message.reply_text("🚫 Only the bot owner can use this command.")
         return
+    
     if not context.args:
-        update.message.reply_text("Please provide an announcement message.")
+        await update.message.reply_text("Please provide an announcement message.")
         return
     
     announcement_text = ' '.join(context.args)
-    chats = context.bot.get_updates()
-    chat_ids = set(update.message.chat.id for update in chats if update.message)
+    sent_count = 0
+    failed_count = 0
     
-    for chat_id in chat_ids:
+    for chat_id in all_chat_ids:
         try:
-            context.bot.send_message(chat_id, f"📢 New announcement:\n\n{announcement_text}")
-        except Exception:
-            continue
+            await context.bot.send_message(chat_id, f"📢 New announcement:\n\n{announcement_text}")
+            sent_count += 1
+        except TelegramError as e:
+            failed_count += 1
+            print(f"Failed to send announcement to chat {chat_id}: {str(e)}")
     
-    update.message.reply_text("Announcement sent to all chats.")
+    await update.message.reply_text(f"Announcement sent to {sent_count} chats. Failed in {failed_count} chats.")
 
-def filter_message(update: Update, context: CallbackContext) -> None:
+async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Save a message as a filter."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     if update.message.reply_to_message:
         if not context.args:
-            update.message.reply_text("Please provide a keyword for the filter.")
+            await update.message.reply_text("Please provide a keyword for the filter.")
             return
         
         keyword = context.args[0].lower()
@@ -501,30 +507,30 @@ def filter_message(update: Update, context: CallbackContext) -> None:
             "audio": message.audio.file_id if message.audio else None,
         }
         
-        update.message.reply_text(f"Filter '{keyword}' has been saved.")
+        await update.message.reply_text(f"Filter '{keyword}' has been saved.")
     else:
-        update.message.reply_text("Please reply to a message to save it as a filter.")
+        await update.message.reply_text("Please reply to a message to save it as a filter.")
 
-def stop_filter(update: Update, context: CallbackContext) -> None:
+async def stop_filter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove a filter."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     
     chat_id = update.effective_chat.id
     if not context.args:
-        update.message.reply_text("Please specify the filter keyword to remove.")
+        await update.message.reply_text("Please specify the filter keyword to remove.")
         return
     
     keyword = context.args[0].lower()
     
     if chat_id in user_data and "filters" in user_data[chat_id] and keyword in user_data[chat_id]["filters"]:
         del user_data[chat_id]["filters"][keyword]
-        update.message.reply_text(f"Filter '{keyword}' has been removed.")
+        await update.message.reply_text(f"Filter '{keyword}' has been removed.")
     else:
-        update.message.reply_text(f"Filter '{keyword}' does not exist.")
+        await update.message.reply_text(f"Filter '{keyword}' does not exist.")
 
-def filter_list(update: Update, context: CallbackContext) -> None:
+async def filter_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show all active filters in the chat."""
     chat_id = update.effective_chat.id
     
@@ -532,11 +538,11 @@ def filter_list(update: Update, context: CallbackContext) -> None:
         filter_list = "Active filters in this chat:\n\n"
         for keyword in user_data[chat_id]["filters"].keys():
             filter_list += f"- {keyword}\n"
-        update.message.reply_text(filter_list)
+        await update.message.reply_text(filter_list)
     else:
-        update.message.reply_text("There are no active filters in this chat.")
+        await update.message.reply_text("There are no active filters in this chat.")
 
-def handle_filters(update: Update, context: CallbackContext) -> None:
+async def handle_filters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Check incoming messages for filters and respond accordingly."""
     chat_id = update.effective_chat.id
     message_text = update.message.text.lower() if update.message.text else ""
@@ -545,24 +551,24 @@ def handle_filters(update: Update, context: CallbackContext) -> None:
         for keyword, filter_data in user_data[chat_id]["filters"].items():
             if keyword in message_text:
                 if filter_data["text"]:
-                    update.message.reply_text(filter_data["text"])
+                    await update.message.reply_text(filter_data["text"])
                 if filter_data["photo"]:
-                    update.message.reply_photo(filter_data["photo"])
+                    await update.message.reply_photo(filter_data["photo"])
                 if filter_data["document"]:
-                    update.message.reply_document(filter_data["document"])
+                    await update.message.reply_document(filter_data["document"])
                 if filter_data["sticker"]:
-                    update.message.reply_sticker(filter_data["sticker"])
+                    await update.message.reply_sticker(filter_data["sticker"])
                 if filter_data["animation"]:
-                    update.message.reply_animation(filter_data["animation"])
+                    await update.message.reply_animation(filter_data["animation"])
                 if filter_data["video"]:
-                    update.message.reply_video(filter_data["video"])
+                    await update.message.reply_video(filter_data["video"])
                 if filter_data["voice"]:
-                    update.message.reply_voice(filter_data["voice"])
+                    await update.message.reply_voice(filter_data["voice"])
                 if filter_data["audio"]:
-                    update.message.reply_audio(filter_data["audio"])
+                    await update.message.reply_audio(filter_data["audio"])
                 break
 
-def info(update: Update, context: CallbackContext) -> None:
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show user and chat information."""
     user = update.effective_user
     chat = update.effective_chat
@@ -573,7 +579,7 @@ def info(update: Update, context: CallbackContext) -> None:
                     f"Username: @{user.username}\n" \
                     f"User ID: {user.id}\n"
     else:
-        member_count = context.bot.get_chat_member_count(chat.id)
+        member_count = await context.bot.get_chat_member_count(chat.id)
         info_text = f"👤 User Information:\n\n" \
                     f"Name: {user.full_name}\n" \
                     f"Username: @{user.username}\n" \
@@ -591,9 +597,9 @@ def info(update: Update, context: CallbackContext) -> None:
     keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.message.reply_text(info_text, reply_markup=reply_markup)
+    await update.message.reply_text(info_text, reply_markup=reply_markup)
 
-def id_command(update: Update, context: CallbackContext) -> None:
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show user and chat IDs in an easy-to-copy format."""
     user = update.effective_user
     chat = update.effective_chat
@@ -605,9 +611,9 @@ def id_command(update: Update, context: CallbackContext) -> None:
     keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.message.reply_text(id_text, parse_mode='Markdown', reply_markup=reply_markup)
+    await update.message.reply_text(id_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
-def rules(update: Update, context: CallbackContext) -> None:
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show chat rules."""
     chat_id = update.effective_chat.id
     
@@ -619,9 +625,9 @@ def rules(update: Update, context: CallbackContext) -> None:
     keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.message.reply_text(rules_text, reply_markup=reply_markup)
+    await update.message.reply_text(rules_text, reply_markup=reply_markup)
 
-def help_command(update: Update, context: CallbackContext) -> None:
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     help_text = "🌼 DaisyBot Help 🌼\n\n" \
                 "Here are some available commands:\n\n" \
@@ -654,24 +660,24 @@ def help_command(update: Update, context: CallbackContext) -> None:
     keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    update.message.reply_text(help_text, reply_markup=reply_markup)
+    await update.message.reply_text(help_text, reply_markup=reply_markup)
 
-def roll_dice(update: Update, context: CallbackContext) -> None:
+async def roll_dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Roll a dice."""
     result = random.randint(1, 6)
-    update.message.reply_text(f"🎲 You rolled a {result}!")
+    await update.message.reply_text(f"🎲 You rolled a {result}!")
 
-def flip_coin(update: Update, context: CallbackContext) -> None:
+async def flip_coin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Flip a coin."""
     result = random.choice(["Heads", "Tails"])
-    update.message.reply_text(f"🪙 The coin landed on: {result}!")
+    await update.message.reply_text(f"🪙 The coin landed on: {result}!")
 
-def random_number(update: Update, context: CallbackContext) -> None:
+async def random_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate a random number between 1 and 100."""
     result = random.randint(1, 100)
-    update.message.reply_text(f"🔢 Your random number is: {result}")
+    await update.message.reply_text(f"🔢 Your random number is: {result}")
 
-def quote(update: Update, context: CallbackContext) -> None:
+async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a random quote."""
     quotes = [
         "Be the change you wish to see in the world. - Mahatma Gandhi",
@@ -735,103 +741,103 @@ def quote(update: Update, context: CallbackContext) -> None:
 
     ]
     chosen_quote = random.choice(quotes)
-    update.message.reply_text(f"📜 {chosen_quote}")
+    await update.message.reply_text(f"📜 {chosen_quote}")
 
-def set_welcome(update: Update, context: CallbackContext) -> None:
+async def set_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set welcome message."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
     if not context.args:
-        update.message.reply_text("Please provide a welcome message.")
+        await update.message.reply_text("Please provide a welcome message.")
         return
     
     welcome_message = ' '.join(context.args)
     if chat_id not in user_data:
         user_data[chat_id] = {}
     user_data[chat_id]["welcome_message"] = welcome_message
-    update.message.reply_text("👋 Welcome message has been set.")
+    await update.message.reply_text("👋 Welcome message has been set.")
 
-def set_goodbye(update: Update, context: CallbackContext) -> None:
+async def set_goodbye(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set goodbye message."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
     if not context.args:
-        update.message.reply_text("Please provide a goodbye message.")
+        await update.message.reply_text("Please provide a goodbye message.")
         return
     
     goodbye_message = ' '.join(context.args)
     if chat_id not in user_data:
         user_data[chat_id] = {}
     user_data[chat_id]["goodbye_message"] = goodbye_message
-    update.message.reply_text("👋 Goodbye message has been set.")
+    await update.message.reply_text("👋 Goodbye message has been set.")
 
-def set_rules(update: Update, context: CallbackContext) -> None:
+async def set_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set chat rules."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
     if not context.args:
-        update.message.reply_text("Please provide the chat rules.")
+        await update.message.reply_text("Please provide the chat rules.")
         return
     
     rules = ' '.join(context.args)
     if chat_id not in user_data:
         user_data[chat_id] = {}
     user_data[chat_id]["rules"] = rules
-    update.message.reply_text("📜 Chat rules have been set.")
+    await update.message.reply_text("📜 Chat rules have been set.")
 
-def set_antispam(update: Update, context: CallbackContext) -> None:
+async def set_antispam(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set anti-spam settings."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
     if not context.args or len(context.args) != 2:
-        update.message.reply_text("Please provide the number of messages and time frame in seconds.")
+        await update.message.reply_text("Please provide the number of messages and time frame in seconds.")
         return
     
     try:
         msg_limit = int(context.args[0])
         time_frame = int(context.args[1])
     except ValueError:
-        update.message.reply_text("Please provide valid numbers for message limit and time frame.")
+        await update.message.reply_text("Please provide valid numbers for message limit and time frame.")
         return
     
     if chat_id not in user_data:
         user_data[chat_id] = {}
     user_data[chat_id]["antispam"] = {"msg_limit": msg_limit, "time_frame": time_frame}
-    update.message.reply_text(f"🛡️ Anti-spam settings updated. "
-                              f"Users sending more than {msg_limit} messages in {time_frame} seconds will be warned.")
+    await update.message.reply_text(f"🛡️ Anti-spam settings updated. "
+                                    f"Users sending more than {msg_limit} messages in {time_frame} seconds will be warned.")
 
-def set_antiflood(update: Update, context: CallbackContext) -> None:
+async def set_antiflood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set anti-flood settings."""
-    if not is_admin(update, context) and not is_owner(update.effective_user.id):
-        update.message.reply_text("🚫 You don't have permission to use this command.")
+    if not await is_admin(update, context) and not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 You don't have permission to use this command.")
         return
     chat_id = update.effective_chat.id
     if not context.args or len(context.args) != 2:
-        update.message.reply_text("Please provide the number of messages and time frame in seconds.")
+        await update.message.reply_text("Please provide the number of messages and time frame in seconds.")
         return
     
     try:
         msg_limit = int(context.args[0])
         time_frame = int(context.args[1])
     except ValueError:
-        update.message.reply_text("Please provide valid numbers for message limit and time frame.")
+        await update.message.reply_text("Please provide valid numbers for message limit and time frame.")
         return
     
     if chat_id not in user_data:
         user_data[chat_id] = {}
     user_data[chat_id]["antiflood"] = {"msg_limit": msg_limit, "time_frame": time_frame}
-    update.message.reply_text(f"🌊 Anti-flood settings updated. "
-                              f"Users sending more than {msg_limit} messages in {time_frame} seconds will be muted.")
+    await update.message.reply_text(f"🌊 Anti-flood settings updated. "
+                                    f"Users sending more than {msg_limit} messages in {time_frame} seconds will be muted.")
 
-def handle_message(update: Update, context: CallbackContext) -> None:
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages and check for spam and flood."""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
@@ -840,17 +846,17 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         # Anti-spam check
         if "antispam" in user_data[chat_id]:
             antispam = user_data[chat_id]["antispam"]
-            check_spam(update, context, antispam["msg_limit"], antispam["time_frame"])
+            await check_spam(update, context, antispam["msg_limit"], antispam["time_frame"])
         
         # Anti-flood check
         if "antiflood" in user_data[chat_id]:
             antiflood = user_data[chat_id]["antiflood"]
-            check_flood(update, context, antiflood["msg_limit"], antiflood["time_frame"])
+            await check_flood(update, context, antiflood["msg_limit"], antiflood["time_frame"])
     
     # Check for filters
-    handle_filters(update, context)
+    await handle_filters(update, context)
 
-def check_spam(update: Update, context: CallbackContext, msg_limit: int, time_frame: int) -> None:
+async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE, msg_limit: int, time_frame: int) -> None:
     """Check for spam messages."""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
@@ -867,10 +873,10 @@ def check_spam(update: Update, context: CallbackContext, msg_limit: int, time_fr
     ]
     
     if len(user_data[chat_id][user_id]["messages"]) > msg_limit:
-        warn(update, context)
+        await warn(update, context)
         user_data[chat_id][user_id]["messages"] = []  # Reset message count after warning
 
-def check_flood(update: Update, context: CallbackContext, msg_limit: int, time_frame: int) -> None:
+async def check_flood(update: Update, context: ContextTypes.DEFAULT_TYPE, msg_limit: int, time_frame: int) -> None:
     """Check for flood messages."""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
@@ -887,95 +893,196 @@ def check_flood(update: Update, context: CallbackContext, msg_limit: int, time_f
     ]
     
     if len(user_data[chat_id][user_id]["flood_messages"]) > msg_limit:
-        mute(update, context)
+        await mute(update, context)
         user_data[chat_id][user_id]["flood_messages"] = []  # Reset message count after muting
 
-def button(update: Update, context: CallbackContext) -> None:
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses."""
     query = update.callback_query
-    query.answer()
+    await query.answer()
     
     if query.data == 'main_menu':
-        main_menu(update, context)
+        await main_menu(update, context)
     elif query.data == 'admin_commands':
-        admin_commands(update, context)
+        await admin_commands(update, context)
     elif query.data == 'user_commands':
-        user_commands(update, context)
+        await user_commands(update, context)
     elif query.data == 'fun_commands':
-        fun_commands(update, context)
+        await fun_commands(update, context)
     elif query.data == 'settings':
-        settings(update, context)
+        await settings(update, context)
     elif query.data in ['ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'promote', 'demote', 'gban', 'purge', 'filter', 'stop', 'filterlist']:
-        query.edit_message_text(f"Use /{query.data} command to {query.data} a user or manage filters.")
+        await query.edit_message_text(f"Use /{query.data} command to {query.data} a user or manage filters.")
     elif query.data == 'info':
         info_text = "Use /info command to get user and chat information."
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='user_commands')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        query.edit_message_text(info_text, reply_markup=reply_markup)
+        await query.edit_message_text(info_text, reply_markup=reply_markup)
     elif query.data == 'id':
         id_text = "Use /id command to get user and chat IDs in an easy-to-copy format."
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data='user_commands')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        query.edit_message_text(id_text, reply_markup=reply_markup)
+        await query.edit_message_text(id_text, reply_markup=reply_markup)
     elif query.data in ['rules', 'help']:
-        query.edit_message_text(f"Use /{query.data} command to get {query.data}.")
+        await query.edit_message_text(f"Use /{query.data} command to get {query.data}.")
     elif query.data in ['roll_dice', 'flip_coin', 'random_number', 'quote']:
-        query.edit_message_text(f"Use /{query.data} command to {query.data.replace('_', ' ')}.")
+        await query.edit_message_text(f"Use /{query.data} command to {query.data.replace('_', ' ')}.")
     elif query.data in ['set_welcome', 'set_goodbye', 'set_rules', 'set_antispam', 'set_antiflood']:
-        query.edit_message_text(f"Use /{query.data} command to set {query.data.replace('set_', '')}.")
+        await query.edit_message_text(f"Use /{query.data} command to set {query.data.replace('set_', '')}.")
+
+async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a welcome message when a new member joins the chat."""
+    for new_member in update.message.new_chat_members:
+        if new_member.id != context.bot.id:  # Don't welcome the bot itself
+            welcome_text = (
+                f"Welcome {new_member.mention_markdown_v2()}\! 🎉\n\n"
+                f"Please read our rules and enjoy your stay\."
+            )
+            keyboard = [
+                [InlineKeyboardButton("📜 Rules", callback_data="rules")],
+                [InlineKeyboardButton("ℹ️ About Us", callback_data="about")],
+                [InlineKeyboardButton("🤖 Bot Commands", callback_data="commands")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_markdown_v2(welcome_text, reply_markup=reply_markup)
+
+async def captcha_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a captcha verification when a new member joins the chat."""
+    for new_member in update.message.new_chat_members:
+        if new_member.id != context.bot.id:  # Don't verify the bot itself
+            # Restrict the user
+            await context.bot.restrict_chat_member(
+                update.effective_chat.id,
+                new_member.id,
+                permissions=ChatPermissions(can_send_messages=False)
+            )
+            
+            # Generate a simple math captcha
+            num1 = random.randint(1, 10)
+            num2 = random.randint(1, 10)
+            answer = num1 + num2
+            
+            captcha_text = (
+                f"Welcome {new_member.mention_markdown_v2()}\! 🤖\n\n"
+                f"To verify you're human, please solve this simple math problem:\n\n"
+                f"{num1} \+ {num2} = ?"
+            )
+            
+            # Store the correct answer in user_data
+            context.user_data[new_member.id] = {"captcha_answer": answer}
+            
+            await update.message.reply_markdown_v2(captcha_text)
+
+async def check_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check the captcha answer provided by the user."""
+    user = update.effective_user
+    if user.id in context.user_data and "captcha_answer" in context.user_data[user.id]:
+        try:
+            user_answer = int(update.message.text)
+            if user_answer == context.user_data[user.id]["captcha_answer"]:
+                # Captcha solved correctly, unrestrict the user
+                await context.bot.restrict_chat_member(
+                    update.effective_chat.id,
+                    user.id,
+                    permissions=ChatPermissions(
+                        can_send_messages=True,
+                        can_send_media_messages=True,
+                        can_send_other_messages=True,
+                        can_add_web_page_previews=True
+                    )
+                )
+                await update.message.reply_text(f"✅ Captcha solved correctly. Welcome, {user.mention_markdown_v2()}\!", parse_mode=ParseMode.MARKDOWN_V2)
+                del context.user_data[user.id]["captcha_answer"]
+            else:
+                await update.message.reply_text("❌ Incorrect answer. Please try again.")
+        except ValueError:
+            await update.message.reply_text("Please enter a valid number.")
+    else:
+        # If there's no captcha pending for this user, ignore the message
+        pass
+
+async def schedule_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Schedule an announcement to be sent after a specified delay."""
+    if not is_owner(update.effective_user.id):
+        await update.message.reply_text("🚫 Only the bot owner can use this command.")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /schedule_announcement <delay_in_minutes> <announcement_text>")
+        return
+    
+    try:
+        delay = int(context.args[0])
+        announcement_text = ' '.join(context.args[1:])
+        
+        await update.message.reply_text(f"Announcement scheduled to be sent in {delay} minutes.")
+        await asyncio.sleep(delay * 60)
+        
+        sent_count = 0
+        failed_count = 0
+        
+        for chat_id in all_chat_ids:
+            try:
+                await context.bot.send_message(chat_id, f"📢 Scheduled announcement:\n\n{announcement_text}")
+                sent_count += 1
+            except TelegramError as e:
+                failed_count += 1
+                print(f"Failed to send scheduled announcement to chat {chat_id}: {str(e)}")
+        
+        await update.message.reply_text(f"Scheduled announcement sent to {sent_count} chats. Failed in {failed_count} chats.")
+    except ValueError:
+        await update.message.reply_text("Please provide a valid number of minutes for the delay.")
 
 def main() -> None:
     """Start the bot."""
-    # Create the Updater and pass it your bot's token.
-    updater = Updater(TOKEN)
+    application = Application.builder().token(TOKEN).build()
     
-    # Get the dispatcher to register handlers
-    dispatcher = updater.dispatcher
+    # Add job to update chat list periodically
+    application.job_queue.run_repeating(update_chat_list, interval=3600)  # Update every hour
     
-    # on different commands - answer in Telegram
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("ban", ban))
-    dispatcher.add_handler(CommandHandler("unban", unban))
-    dispatcher.add_handler(CommandHandler("kick", kick))
-    dispatcher.add_handler(CommandHandler("mute", mute))
-    dispatcher.add_handler(CommandHandler("unmute", unmute))
-    dispatcher.add_handler(CommandHandler("warn", warn))
-    dispatcher.add_handler(CommandHandler("unwarn", unwarn))
-    dispatcher.add_handler(CommandHandler("promote", promote))
-    dispatcher.add_handler(CommandHandler("demote", demote))
-    dispatcher.add_handler(CommandHandler("gban", gban))
-    dispatcher.add_handler(CommandHandler("announcement", announcement))
-    dispatcher.add_handler(CommandHandler("info", info))
-    dispatcher.add_handler(CommandHandler("id", id_command))
-    dispatcher.add_handler(CommandHandler("rules", rules))
-    dispatcher.add_handler(CommandHandler("roll_dice", roll_dice))
-    dispatcher.add_handler(CommandHandler("flip_coin", flip_coin))
-    dispatcher.add_handler(CommandHandler("random_number", random_number))
-    dispatcher.add_handler(CommandHandler("quote", quote))
-    dispatcher.add_handler(CommandHandler("set_welcome", set_welcome))
-    dispatcher.add_handler(CommandHandler("set_goodbye", set_goodbye))
-    dispatcher.add_handler(CommandHandler("set_rules", set_rules))
-    dispatcher.add_handler(CommandHandler("set_antispam", set_antispam))
-    dispatcher.add_handler(CommandHandler("set_antiflood", set_antiflood))
-    dispatcher.add_handler(CommandHandler("purge", purge))
-    dispatcher.add_handler(CommandHandler("filter", filter_message))
-    dispatcher.add_handler(CommandHandler("stop", stop_filter))
-    dispatcher.add_handler(CommandHandler("filterlist", filter_list))
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("ban", ban))
+    application.add_handler(CommandHandler("unban", unban))
+    application.add_handler(CommandHandler("kick", kick))
+    application.add_handler(CommandHandler("mute", mute))
+    application.add_handler(CommandHandler("unmute", unmute))
+    application.add_handler(CommandHandler("warn", warn))
+    application.add_handler(CommandHandler("unwarn", unwarn))
+    application.add_handler(CommandHandler("promote", promote))
+    application.add_handler(CommandHandler("demote", demote))
+    application.add_handler(CommandHandler("gban", gban))
+    application.add_handler(CommandHandler("announcement", announcement))
+    application.add_handler(CommandHandler("info", info))
+    application.add_handler(CommandHandler("id", id_command))
+    application.add_handler(CommandHandler("rules", rules))
+    application.add_handler(CommandHandler("roll_dice", roll_dice))
+    application.add_handler(CommandHandler("flip_coin", flip_coin))
+    application.add_handler(CommandHandler("random_number", random_number))
+    application.add_handler(CommandHandler("quote", quote))
+    application.add_handler(CommandHandler("set_welcome", set_welcome))
+    application.add_handler(CommandHandler("set_goodbye", set_goodbye))
+    application.add_handler(CommandHandler("set_rules", set_rules))
+    application.add_handler(CommandHandler("set_antispam", set_antispam))
+    application.add_handler(CommandHandler("set_antiflood", set_antiflood))
+    application.add_handler(CommandHandler("purge", purge))
+    application.add_handler(CommandHandler("filter", filter_message))
+    application.add_handler(CommandHandler("stop", stop_filter))
+    application.add_handler(CommandHandler("filterlist", filter_list))
+    application.add_handler(CommandHandler("schedule_announcement", schedule_announcement))
     
-    # on non command i.e message - check for spam and handle message
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    # Message handlers
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, captcha_verification))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_captcha))
     
-    # on button press
-    dispatcher.add_handler(CallbackQueryHandler(button))
+    # Callback query handler
+    application.add_handler(CallbackQueryHandler(button))
     
     # Start the Bot
-    updater.start_polling()
-    
-    # Run the bot until you press Ctrl-C or the process receives SIGINT,
-    # SIGTERM or SIGABRT. This should be used most of the time, since
-    # start_polling() is non-blocking and will stop the bot gracefully.
-    updater.idle()
+    application.run_polling()
 
 if __name__ == '__main__':
     print(f"🌼 DaisyBot is starting up! Managed by {OWNER_USERNAME}")
