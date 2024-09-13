@@ -1,6 +1,6 @@
 import logging
 import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters, CallbackContext
 import json
 from datetime import datetime, timedelta
@@ -10,9 +10,9 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
-TOKEN = '6972425077:AAG1-KTOtuR-qVO6siEP1sOnyilWbds8Sy4'
+TOKEN = '7322487785:AAFshCuUmVA8-YJNz55pYamOcmr0aeBFq2Y'
 
-# Store user data (you might want to use a database for a production bot)
+# Store user data want to use a database for a production bot)
 user_data = {}
 
 # Bot owner details
@@ -56,8 +56,12 @@ def admin_commands(update: Update, context: CallbackContext) -> None:
          InlineKeyboardButton("✅ Unban", callback_data='unban')],
         [InlineKeyboardButton("👢 Kick", callback_data='kick'),
          InlineKeyboardButton("🔇 Mute", callback_data='mute')],
-        [InlineKeyboardButton("⚠️ Warn", callback_data='warn'),
-         InlineKeyboardButton("🔄 Unwarn", callback_data='unwarn')],
+        [InlineKeyboardButton("🔊 Unmute", callback_data='unmute'),
+         InlineKeyboardButton("⚠️ Warn", callback_data='warn')],
+        [InlineKeyboardButton("🔄 Unwarn", callback_data='unwarn'),
+         InlineKeyboardButton("🎖️ Promote", callback_data='promote')],
+        [InlineKeyboardButton("⬇️ Demote", callback_data='demote'),
+         InlineKeyboardButton("🌐🚫 Global Ban", callback_data='gban')],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -178,7 +182,7 @@ def mute(update: Update, context: CallbackContext) -> None:
             context.bot.restrict_chat_member(
                 chat_id, 
                 user_id, 
-                permissions=telegram.ChatPermissions(
+                permissions=ChatPermissions(
                     can_send_messages=False,
                     can_send_media_messages=False,
                     can_send_other_messages=False,
@@ -244,6 +248,120 @@ def unwarn(update: Update, context: CallbackContext) -> None:
             update.message.reply_text(f"{user.mention_markdown_v2()} has no warnings\.", parse_mode='MarkdownV2')
     else:
         update.message.reply_text("Please reply to a message to remove a warning from the user.")
+
+def promote(update: Update, context: CallbackContext) -> None:
+    """Promote a user to admin."""
+    if not is_admin(update, context):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    if update.message.reply_to_message:
+        chat_id = update.effective_chat.id
+        user_id = update.message.reply_to_message.from_user.id
+        try:
+            context.bot.promote_chat_member(chat_id, user_id,
+                                            can_change_info=True,
+                                            can_delete_messages=True,
+                                            can_invite_users=True,
+                                            can_restrict_members=True,
+                                            can_pin_messages=True,
+                                            can_promote_members=False)
+            update.message.reply_text(f"🎖️ User {user_id} has been promoted to admin.")
+        except Exception as e:
+            update.message.reply_text(f"❌ Failed to promote user: {str(e)}")
+    else:
+        update.message.reply_text("Please reply to a message to promote the user.")
+
+def demote(update: Update, context: CallbackContext) -> None:
+    """Demote an admin to regular user."""
+    if not is_admin(update, context):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    if update.message.reply_to_message:
+        chat_id = update.effective_chat.id
+        user_id = update.message.reply_to_message.from_user.id
+        try:
+            context.bot.promote_chat_member(chat_id, user_id,
+                                            can_change_info=False,
+                                            can_delete_messages=False,
+                                            can_invite_users=False,
+                                            can_restrict_members=False,
+                                            can_pin_messages=False,
+                                            can_promote_members=False)
+            update.message.reply_text(f"⬇️ User {user_id} has been demoted to regular user.")
+        except Exception as e:
+            update.message.reply_text(f"❌ Failed to demote user: {str(e)}")
+    else:
+        update.message.reply_text("Please reply to a message to demote the user.")
+
+def unmute(update: Update, context: CallbackContext) -> None:
+    """Unmute a user."""
+    if not is_admin(update, context):
+        update.message.reply_text("🚫 You don't have permission to use this command.")
+        return
+    if update.message.reply_to_message:
+        chat_id = update.effective_chat.id
+        user_id = update.message.reply_to_message.from_user.id
+        try:
+            context.bot.restrict_chat_member(
+                chat_id, 
+                user_id, 
+                permissions=ChatPermissions(
+                    can_send_messages=True,
+                    can_send_media_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True
+                )
+            )
+            update.message.reply_text(f"🔊 User {user_id} has been unmuted.")
+        except Exception as e:
+            update.message.reply_text(f"❌ Failed to unmute user: {str(e)}")
+    else:
+        update.message.reply_text("Please reply to a message to unmute the user.")
+
+def gban(update: Update, context: CallbackContext) -> None:
+    """Global ban a user from all chats where the bot is present."""
+    if update.effective_user.id != OWNER_ID:
+        update.message.reply_text("🚫 Only the bot owner can use this command.")
+        return
+    if update.message.reply_to_message:
+        user_id = update.message.reply_to_message.from_user.id
+        try:
+            # Get all chats where the bot is a member
+            chats = context.bot.get_updates()
+            chat_ids = set(update.message.chat.id for update in chats if update.message)
+            
+            for chat_id in chat_ids:
+                try:
+                    context.bot.ban_chat_member(chat_id, user_id)
+                except Exception:
+                    continue
+            
+            update.message.reply_text(f"🌐🚫 User {user_id} has been globally banned from all chats.")
+        except Exception as e:
+            update.message.reply_text(f"❌ Failed to globally ban user: {str(e)}")
+    else:
+        update.message.reply_text("Please reply to a message to globally ban the user.")
+
+def announcement(update: Update, context: CallbackContext) -> None:
+    """Send an announcement to all chats where the bot is present."""
+    if update.effective_user.id != OWNER_ID:
+        update.message.reply_text("🚫 Only the bot owner can use this command.")
+        return
+    if not context.args:
+        update.message.reply_text("Please provide an announcement message.")
+        return
+    
+    announcement_text = ' '.join(context.args)
+    chats = context.bot.get_updates()
+    chat_ids = set(update.message.chat.id for update in chats if update.message)
+    
+    for chat_id in chat_ids:
+        try:
+            context.bot.send_message(chat_id, f"📢 New announcement:\n\n{announcement_text}")
+        except Exception:
+            continue
+    
+    update.message.reply_text("Announcement sent to all chats.")
 
 def info(update: Update, context: CallbackContext) -> None:
     """Show user and chat information."""
@@ -317,8 +435,13 @@ def help_command(update: Update, context: CallbackContext) -> None:
                 "/unban - Unban a user (admin only)\n" \
                 "/kick - Kick a user (admin only)\n" \
                 "/mute - Mute a user (admin only)\n" \
+                "/unmute - Unmute a user (admin only)\n" \
                 "/warn - Warn a user (admin only)\n" \
                 "/unwarn - Remove a warning from a user (admin only)\n" \
+                "/promote - Promote a user to admin (admin only)\n" \
+                "/demote - Demote an admin to regular user (admin only)\n" \
+                "/gban - Globally ban a user (bot owner only)\n" \
+                "/announcement - Send an announcement to all chats (bot owner only)\n" \
                 "/roll_dice - Roll a dice\n" \
                 "/flip_coin - Flip a coin\n" \
                 "/random_number - Generate a random number\n" \
@@ -522,7 +645,7 @@ def button(update: Update, context: CallbackContext) -> None:
         fun_commands(update, context)
     elif query.data == 'settings':
         settings(update, context)
-    elif query.data in ['ban', 'unban', 'kick', 'mute', 'warn', 'unwarn']:
+    elif query.data in ['ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'promote', 'demote', 'gban']:
         query.edit_message_text(f"Use /{query.data} command to {query.data} a user.")
     elif query.data == 'info':
         info_text = "Use /info command to get user and chat information."
@@ -556,8 +679,13 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("unban", unban))
     dispatcher.add_handler(CommandHandler("kick", kick))
     dispatcher.add_handler(CommandHandler("mute", mute))
+    dispatcher.add_handler(CommandHandler("unmute", unmute))
     dispatcher.add_handler(CommandHandler("warn", warn))
     dispatcher.add_handler(CommandHandler("unwarn", unwarn))
+    dispatcher.add_handler(CommandHandler("promote", promote))
+    dispatcher.add_handler(CommandHandler("demote", demote))
+    dispatcher.add_handler(CommandHandler("gban", gban))
+    dispatcher.add_handler(CommandHandler("announcement", announcement))
     dispatcher.add_handler(CommandHandler("info", info))
     dispatcher.add_handler(CommandHandler("id", id_command))
     dispatcher.add_handler(CommandHandler("rules", rules))
